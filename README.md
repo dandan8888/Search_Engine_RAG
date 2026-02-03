@@ -61,14 +61,15 @@ jupyter notebook
 Download the data:
 
 ```python
-import requests 
+import requests   #tool to grab data online
 
 docs_url = 'https://github.com/alexeygrigorev/llm-rag-workshop/raw/main/notebooks/documents.json'
 docs_response = requests.get(docs_url)
-documents_raw = docs_response.json()
+documents_raw = docs_response.json()   #Converts the downloaded data into a Python list/dictionary format
 
 documents = []
 
+#Flattern courses grouped data to columns
 for course in documents_raw:
     course_name = course['course']
 
@@ -108,6 +109,7 @@ df[df.course == 'data-engineering-zoomcamp'].head()
 ```
 
 ### Vectorization
+(turn words into vectors based on count)
 
 For Count Vectorizer and TF-IDF we will first use a simple example
 
@@ -121,16 +123,22 @@ docs_example = [
 ]
 ```
 
-Let's use a count vectorizer first:
+1.Count vectorizer first, "Bag of Words" encoding, Sparse Vector approach count frequency of word appears:
 
 ```python
 from sklearn.feature_extraction.text import CountVectorizer
 
+#Index each unique word without useless ones in English
 cv = CountVectorizer(stop_words='english')
-X = cv.fit_transform(docs_example)
 
-names = cv.get_feature_names_out()
+#Output sparse matrix where:
+#-Each row is one of your documents.
+#-Each column represents a specific word.
+#-The number is how many times that word appeared in that specific doc.
+X = cv.fit_transform(docs_example) 
 
+#Reverse lookup from index to word
+names = cv.get_feature_names_out()   
 df_docs = pd.DataFrame(X.toarray(), columns=names).T
 df_docs
 ```
@@ -140,7 +148,7 @@ This representation is called "bag of words" - here we ignore the order of words
 Now let's replace it with `TfidfVectorizer`:
 
 ```python
-from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.feature_extraction.text import TfidfVectorizer #count -> frequency
 
 cv = TfidfVectorizer(stop_words='english')
 X = cv.fit_transform(docs_example)
@@ -164,6 +172,7 @@ q.toarray()
 ```
 
 We can see the words of the query and the words of some document:
+Compare the common count/frequency of each word in user query and second doc in X.
 
 ```python
 query_dict = dict(zip(names, q.toarray()[0]))
@@ -175,15 +184,16 @@ doc_dict
 
 The more words in common - the better the matching score. Let's calculate it:
 
+rows as each word, column as query and doc, compare each word count
 ```python
 df_qd = pd.DataFrame([query_dict, doc_dict], index=['query', 'doc']).T
 
-(df_qd['query'] * df_qd['doc']).sum()
+(df_qd['query'] * df_qd['doc']).sum()   #sum each word multiplication
 ```
 
 This is a dot-product. So we can use matrix multiplication to compute the score:
 
-
+Doc-row x q col, output rows of score of each doc
 ```python
 X.dot(q.T).toarray()
 ```
@@ -218,6 +228,7 @@ for field in fields:
     transformers[field] = cv
     matrices[field] = X
 
+#transformed text contains more info
 transformers['text'].get_feature_names_out()
 matrices['text']
 ```
@@ -229,7 +240,8 @@ Let's now do search with the text field:
 ```python
 query = "I just signed up. Is it too late to join the course?"
 
-q = transformers['text'].transform([query])
+#transform user query string to text language
+q = transformers['text'].transform([query])  
 score = cosine_similarity(matrices['text'], q).flatten()
 ```
 
@@ -237,7 +249,7 @@ Let's do it only for the data engineering course:
 
 ```python
 mask = (df.course == 'data-engineering-zoomcamp').values
-score = score * mask
+score = score * mask    #list of DE score
 ```
 
 And get the top results:
@@ -250,7 +262,7 @@ idx = np.argsort(-score)[:10]
 
 Note: [np.argpartition](https://numpy.org/doc/stable/reference/generated/numpy.argpartition.html) is a more efficient way of doing the same thing
 
-Get the docs:
+Get the docs(Desc top 10):
 
 ```python
 df.iloc[idx].text
@@ -266,7 +278,7 @@ boost = {'question': 3.0}
 score = np.zeros(len(df))
 
 for f in fields:
-    b = boost.get(f, 1.0)
+    b = boost.get(f, 1.0)  #get 'question' value if exist else b=1
     q = transformers[f].transform([query])
     s = cosine_similarity(matrices[f], q).flatten()
     score = score + b * s
@@ -289,7 +301,7 @@ Getting the results:
 ```python
 idx = np.argsort(-score)[:10]
 results = df.iloc[idx]
-results.to_dict(orient='records')
+results.to_dict(orient='records')  #dict pass to AI
 ```
 
 ### Putting it all together 
@@ -355,6 +367,7 @@ You can find the implementation here too if you want to use it: https://github.c
 ## 4. Embeddings and Vector Search
 
 Problem with text - only exact matches. How about synonyms? 
+(Long pages with limited topics)
 
 ### What are Embeddings?
 
@@ -385,10 +398,11 @@ from sklearn.decomposition import TruncatedSVD
 X = matrices['text']
 cv = transformers['text']
 
-svd = TruncatedSVD(n_components=16)
+#16 hidden dimensions,words appear frequently togeher will be grouped to single dimention
+svd = TruncatedSVD(n_components=16)   
 X_emb = svd.fit_transform(X)
 
-X_emb[0]
+X_emb[0]   #doc 0 represented by 16 concepts
 ```
 
 For query:
@@ -448,7 +462,8 @@ idx = np.argsort(-score)[:10]
 list(df.loc[idx].text)
 ```
 
-### BERT 
+### BERT
+(keep word order, turn words into vector based on meaning)
 
 The problem with the previous two approaches is that they don't take into account the word order. They just treat all the words separately (that's why it's called "Bag-of-Words")
 
@@ -491,12 +506,15 @@ Then we compute the embeddings:
 ```python
 with torch.no_grad():  # Disable gradient calculation for inference
     outputs = model(**encoded_input)
-    hidden_states = outputs.last_hidden_state
+
+    #vector for every word in sentence   nx768
+    hidden_states = outputs.last_hidden_state   
 ```
 
 Now we need to compress the embeddings:
 
 ```python
+#mean pooling output 1 vector represents overall meaning of the sentence
 sentence_embeddings = hidden_states.mean(dim=1)
 sentence_embeddings.shape
 ```
@@ -545,7 +563,7 @@ for batch in tqdm(text_batches):
         batch_embeddings_np = batch_embeddings.cpu().numpy()
         all_embeddings.append(batch_embeddings_np)
 
-final_embeddings = np.vstack(all_embeddings)
+final_embeddings = np.vstack(all_embeddings)   #n doc x 768
 ```
 
 Let's put it into a function:
